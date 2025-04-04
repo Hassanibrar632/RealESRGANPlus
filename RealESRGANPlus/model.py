@@ -13,7 +13,7 @@ import os
 # Import the local libraries
 from ._utils import Reader, Writer
 
-class RealESRGANplus:
+class RealESRGANPlus:
     def __init__(self, model_name='RealESRGAN_x4plus', model_path=None, gpu_id=None, denoise_strength=0.5, outscale=4, tile=0, tile_pad=10, pre_pad=0, face_enhance=False, fp32=False, alpha_upsampler='realesrgan'):
         """
         Initialize the Real-ESRGAN model with given parameters.
@@ -230,7 +230,7 @@ class RealESRGANplus:
 if __name__ == '__main__':
     # How to use the Image Upscale Model
     print('Real-ESRGAN Image Upscaler')
-    upscaler = RealESRGANplus(model_name='RealESRGAN_x4plus',
+    upscaler = RealESRGANPlus(model_name='RealESRGAN_x4plus',
                               model_path=None,
                               gpu_id=0,
                               denoise_strength=0.0,
@@ -249,7 +249,7 @@ if __name__ == '__main__':
 
     # How to use the Video Upscale Model
     print('Real-ESRGAN Video Upscaler')
-    upscaler = RealESRGANplus(model_name='RealESRGAN_x4plus',
+    upscaler = RealESRGANPlus(model_name='RealESRGAN_x4plus',
                               model_path=None,
                               gpu_id=0,
                               denoise_strength=0.0,
