@@ -1,4 +1,5 @@
 # Import the necessary libraries
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from basicsr.utils.download_util import load_file_from_url
 from realesrgan.archs.srvgg_arch import SRVGGNetCompact
 from basicsr.archs.rrdbnet_arch import RRDBNet
@@ -6,6 +7,7 @@ from realesrgan import RealESRGANer
 from gfpgan import GFPGANer
 from os import path as osp
 from tqdm import tqdm
+import numpy as np
 import glob
 import cv2
 import os
@@ -142,39 +144,60 @@ class RealESRGANPlus:
             print('Error:', error)
         else:
             return output
+        
+
+    def __process_frame(self, args):
+        """
+        Process the frame one by one
+        """
+        idx, frame = args
+        try:
+            if self.face_enhance and self.face_enhancer:
+                _, _, output = self.face_enhancer.enhance(frame, has_aligned=False, only_center_face=False, paste_back=True)
+            else:
+                output, _ = self.upsampler.enhance(frame, outscale=self.outscale)
+        except RuntimeError as error:
+            print('Error', error)
+            print('If you encounter CUDA out of memory, try to set --tile with a smaller number.')
+            return None
+        else:
+            return idx, output
     
-    def upscale_video(self, input_path, output_path, ffmpeg_bin='ffmpeg'):
+    def upscale_video(self, input_path, output_path, max_workers=4, ffmpeg_bin='ffmpeg'):
         """
         Upscale the input video using the Real-ESRGAN model.
         Args:
             input_path (str): Path to the input video.
             output_path (str): Path to save the upscaled video.
+            max_workers (int): How many processes you want to start parallely
             ffmpeg_bin (str): Path to the ffmpeg binary.
         """
-        os.makedirs(output_path, exist_ok=True)
-        print(f'Folder created at {output_path}')
+        # Check for the video
+        if os.path.exists(input_path):
+            print("Input video found")
+        else:
+            print("unable to fins the input video, exiting")
+            return False, None
+        
+        # create output folder
+        if os.path.exists(output_path):
+            pass
+        else:
+            os.makedirs(output_path, exist_ok=True)
+            print(f'Folder created at {output_path}')
 
         # Convert the video to MP4 if it is a FLV file
-        if input_path.endswith('.flv'):
-            mp4_path = input_path.replace('.flv', '.mp4')
-            os.system(f'ffmpeg -i {input_path} -codec copy {mp4_path}')
-            input_path = mp4_path
+        try:
+            if input_path.endswith('.flv'):
+                mp4_path = input_path.replace('.flv', '.mp4')
+                os.system(f'ffmpeg -i {input_path} -codec copy {mp4_path}')
+                input_path = mp4_path
+        except Exception as e:
+            print("Unable to convert video to the right formate: ", e)
+            return False, None
 
         # Extract the video name
         video_name = osp.splitext(os.path.basename(input_path))[0]
-
-        # Process the video
-        return self.infer_video(input_path, video_name, output_path, ffmpeg_bin)
-    
-    def infer_video(self, input_path, video_name, output_path, ffmpeg_bin='ffmpeg'):
-        """
-        Upscale the input video using the Real-ESRGAN model.
-        Args:
-            input_path (str): Path to the input video.
-            video_name (str): Name of the input video.
-            output_path (str): Path to save the upscaled video.
-            ffmpeg_bin (str): Path to the ffmpeg binary.
-        """
         video_save_path = osp.join(output_path, f'{video_name}_out.mp4')
 
         # Check if the model supports face enhancement
@@ -184,47 +207,61 @@ class RealESRGANPlus:
             self.face_enhancer = None
         
         # Initialize the reader and writer
-        reader = Reader(input_path, video_name, output_path, ffmpeg_bin)
-        audio = reader.get_audio()
-        height, width = reader.get_resolution()
-        fps = reader.get_fps()
-        writer = Writer(self.outscale, video_save_path, fps, width, height)
-        print("Video Reading and Writing Initialized")
+        try:
+            success = True
+            reader = Reader(input_path, video_name, output_path, ffmpeg_bin)
+            audio = reader.get_audio()
+            height, width = reader.get_resolution()
+            fps = reader.get_fps()
+            writer = Writer(self.outscale, video_save_path, fps, width, height)
+            print("Video Reading and Writing Initialized")
+        except Exception as e:
+            print("Unable to initilize Reader Writer for the inference: ", e)
+            return None
 
-        # Process the video
+        # Initilize the parameters for the workers
         print('Start video inference...')
+        results = [None]*len(reader)
+        futures = {}
         pbar = tqdm(total=len(reader), unit='frame', desc='inference')
-        while True:
-            img = reader.get_frame()
-            if img is None:
-                break
-            try:
-                if self.face_enhance and self.face_enhancer:
-                    _, _, output = self.face_enhancer.enhance(img, has_aligned=False, only_center_face=False, paste_back=True)
-                else:
-                    output, _ = self.upsampler.enhance(img, outscale=self.outscale)
-            except RuntimeError as error:
-                print('Error', error)
-                print('If you encounter CUDA out of memory, try to set --tile with a smaller number.')
-            else:
-                if output is None:
-                    print('Error: Failed to process the video.')
+
+        # Process the video with the wokers
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # create process for the worker using reader
+            for idx in range(len(reader)):
+                img = reader.get_frame()
+                if img is None:
+                    print("All the imaegs are reead.")
                     break
-                writer.write_frame(output)
-            pbar.update(1)
 
+                # assign the work to the worker
+                future = executor.submit(self.__process_frame, (idx, img))
+                futures[future] = idx
+            # Gather the results from the threads
+            for future in as_completed(futures):
+                idx, output = future.result()
+                results[idx] = output
+                pbar.update(1)
+        for output in results:
+            writer.write_frame(np.array(output))
+        
         # Adding audio to the file
-        if reader.audio:
-            os.system(f'ffmpeg -i "{input_path}" -q:a 0 -map a "{reader.tmp_frames_folder}/{audio.aac}" -y')
-            os.system(f'ffmpeg -i "{video_save_path}" -i "{reader.tmp_frames_folder}/{audio.aac}" -c:v copy -c:a aac -strict experimental "{video_save_path.replace("_out.mp4", "_audio.mp4")}" -y')
-            os.remove(video_save_path)
-            os.rename(video_save_path.replace("_out.mp4", "_audio.mp4"), video_save_path)
+        # if reader.audio:
+        #     os.system(f'ffmpeg -i "{input_path}" -q:a 0 -map a "{reader.tmp_frames_folder}/{audio.aac}" -y')
+        #     os.system(f'ffmpeg -i "{video_save_path}" -i "{reader.tmp_frames_folder}/{audio.aac}" -c:v copy -c:a aac -strict experimental "{video_save_path.replace("_out.mp4", "_audio.mp4")}" -y')
+        #     os.remove(video_save_path)
+        #     os.rename(video_save_path.replace("_out.mp4", "_audio.mp4"), video_save_path)
 
+        # close the reader and writer to freeup space
         reader.close()
         writer.close()
-
-        return video_save_path
-    
+        
+        # Remove the temp fodler and the half processed files.
+        if success:
+            return success, video_save_path
+        else:
+            os.remove(video_save_path)
+            return success, None        
 
 # Example usage
 if __name__ == '__main__':
@@ -259,7 +296,10 @@ if __name__ == '__main__':
                               pre_pad=0,
                               face_enhance=True,
                               fp32=True,
-                              alpha_upsampler='bicubic')
+                              alpha_upsampler='realesrgan')
     
-    out_vid = upscaler.upscale_video('inputs\lr_video.mp4', 'outputs', ffmpeg_bin='ffmpeg')
-    print(f'Upscaled video saved at: {out_vid}')
+    _, out_vid = upscaler.upscale_video('inputs\lr_video.mp4', 'outputs', max_workers=4, ffmpeg_bin='ffmpeg')
+    if _:
+        print(f'Upscaled video saved at: {out_vid}')
+    else:
+        print("Unable to upscale the video.")
