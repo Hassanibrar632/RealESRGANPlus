@@ -78,36 +78,46 @@ from torchvision.transforms.functional import rgb_to_grayscale
 from RealESRGANPlus import RealESRGANPlus
 import cv2
 
-# Load the model
-model = RealESRGANPlus(
-    model_name='RealESRGAN_x4plus',
-    model_path=None,
-    gpu_id=0,
-    denoise_strength=0.0,
-    outscale=4,
-    tile=0,
-    tile_pad=10,
-    pre_pad=0,
-    face_enhance=True,
-    fp32=True,
-    alpha_upsampler='realesrgan'
-)
+# Example usage
+if __name__ == '__main__':
+    # How to use the Image Upscale Model
+    print('Real-ESRGAN Image Upscaler')
+    upscaler = RealESRGANPlus(model_name='RealESRGAN_x4plus',
+                              model_path=None,
+                              gpu_id=0,
+                              denoise_strength=0.0,
+                              outscale=4,
+                              tile=0,
+                              tile_pad=10,
+                              pre_pad=0,
+                              face_enhance=True,
+                              fp32=True,
+                              alpha_upsampler='realesrgan')
+    
+    img = cv2.imread('input\lr_image.png', cv2.IMREAD_UNCHANGED)
+    result = upscaler.upscale_image(img)
+    os.makedirs('output', exist_ok=True)
+    cv2.imwrite(f'output/sr_image.png', result)
 
-# Load a low-resolution image
-img = cv2.imread('input/lr_image.png', cv2.IMREAD_UNCHANGED)
-
-# Upscale the image
-sr_image = model.upscale_image(img)
-
-# Save the output
-cv2.imwrite('output/sr_image.png', sr_image)
-```
-
-### Video Upscaling
-
-```python
-out_vid = model.upscale_video('input/lr_video.mp4', 'output', ffmpeg_bin='ffmpeg')
-print(f'Upscaled video saved to {out_vid}')
+    # How to use the Video Upscale Model
+    print('Real-ESRGAN Video Upscaler')
+    upscaler = RealESRGANPlus(model_name='RealESRGAN_x4plus',
+                              model_path=None,
+                              gpu_id=0,
+                              denoise_strength=0.0,
+                              outscale=4,
+                              tile=0,
+                              tile_pad=10,
+                              pre_pad=0,
+                              face_enhance=True,
+                              fp32=True,
+                              alpha_upsampler='realesrgan')
+    
+    _, out_vid = upscaler.upscale_video('inputs\lr_video.mp4', 'outputs', max_workers=4, ffmpeg_bin='ffmpeg')
+    if _:
+        print(f'Upscaled video saved at: {out_vid}')
+    else:
+        print("Unable to upscale the video.")
 ```
 
 ---
